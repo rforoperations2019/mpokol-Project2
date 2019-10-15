@@ -1,0 +1,110 @@
+---
+title: "Project2 Practice"
+author: "Muriel Pokol"
+date: "October 10, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r setup2, include=FALSE}
+require(rgdal)
+library(ggplot2)
+require(leaflet)
+require(dplyr)
+require(readxl)
+library(jsonlite) # fromJSON
+library(utils) # URLencode functions
+require(stringr)
+require(leaflet.extras)
+
+```
+
+```{r, data_load, results='hide'}
+railway_data     <- readOGR("./GBR_rails.shp", GDAL1_integer64_policy=TRUE)  # for lines map
+admin_data_excel <- read.csv("GBR_adm2.csv")                                 # for poly map
+admin.load       <- readOGR("./GBR_adm2.shp",  GDAL1_integer64_policy=TRUE)  # for poly map  
+```
+
+## YAY APIs
+Data from : https://data.gov.uk/dataset/e284af14-70f0-43b4-a49f-6010eda83fed/travel-to-work-areas-december-2011-ultra-generalised-clipped-boundaries-in-united-kingdom
+```{r, esri}
+# Travel from Work Areas
+# Load as geojson
+travel <- readOGR("http://geoportal1-ons.opendata.arcgis.com/datasets/d3062ec5f03b49a7be631d71586cac8c_4.geojson")
+# Plot polling locations
+plot(travel)
+```
+
+## Train Lines across the United Kingdom
+Builds a map with layer of lines.  This map also includes a functioning `layersControl()` to choose between two basemaps. [^1]
+ 
+[^1]: Railway data did not download with a csv attachment denoting *which* train lines they are or if the railways are named, and so there is no popup associated with this dataset. I spoke to Malvika about this in Office Hours. 
+
+```{r, lines}
+leaflet() %>%
+  
+  # Determine base maps
+  addProviderTiles("Stamen.Toner",      group = "Toner Map") %>%
+  addProviderTiles("Esri.WorldTerrain", group = "World Terrain Map") %>%
+  addProviderTiles("OpenStreetMap.HOT", group = "Street Map") %>% 
+  
+  addPolylines(data = railway_data, color = "tomato", highlightOptions = highlightOptions(color="White", 
+                                                                     bringToFront=TRUE)) %>%
+  addPolygons(data = travel, color = "blue", fillOpacity = 0.25, 
+              highlightOptions = highlightOptions(color="White", bringToFront=TRUE)) %>%
+  
+  # Add in layers control
+  addLayersControl(
+    baseGroups = c("Toner Map", "World Terrain Map", "Street Map"),
+    options = layersControlOptions(collapsed=FALSE)
+  )
+```
+
+<br>
+
+## Administrative Counties in the United Kingdom 
+Builds a map with layer of polygons, again with a functioning `layersControl()` to choose between two basemaps. Counties are broken down with the polygon boundaries, and county name is shown as a popup.
+```{r, merge}
+# start csv ID count at 0 instead of 1 to match shp IDs
+admin_data_excel$OBJECTID = admin_data_excel$OBJECTID - 1
+
+# Merge data on thier respective IDs
+admin      <- admin.load[admin.load$ID_2 %in% admin_data_excel$OBJECTID,]
+admin@data <- merge(admin@data, admin_data_excel, sort=FALSE,
+                    by.x='ID_2', by.y='OBJECTID')
+```
+
+```{r, polygons}
+leaflet(data = admin) %>% 
+  
+  # Determine base maps
+  addProviderTiles("Stamen.Toner",    group = "Toner Map") %>%
+  addProviderTiles("Esri.WorldTerrain", group = "World Terrain Map") %>%
+  addProviderTiles("OpenStreetMap.HOT", group = "Street Map") %>%
+  
+  addPolygons(color = "tomato", fillOpacity = 0.5, 
+              highlightOptions = highlightOptions(color="White", bringToFront=TRUE),
+              popup = ~paste0(admin$NAME_2.x, ", ", admin$TYPE_2.x)) %>%
+  addPolylines(data = travel, color = "blue", fillOpacity = 0.25, 
+              highlightOptions = highlightOptions(color="White", bringToFront=TRUE)) %>%
+  
+  # Add in layers control
+  addLayersControl(
+    baseGroups = c("Toner Map", "World Terrain Map", "Street Map"),
+    options = layersControlOptions(collapsed=FALSE)
+  )
+```
+
+
+
+```{r}
+ggplot(admin_data_excel, aes(x=NAME_1, fill=TYPE_2)) + geom_bar()
+```
+
+
+
+
+
