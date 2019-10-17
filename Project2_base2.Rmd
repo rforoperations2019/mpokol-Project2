@@ -1,0 +1,96 @@
+---
+title: "Project2_base2"
+author: "Muriel Pokol"
+date: "October 16, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r setup2, include=FALSE}
+require(rgdal)
+library(ggplot2)
+require(leaflet)
+require(dplyr)
+require(readxl)
+library(jsonlite) # fromJSON
+library(utils) # URLencode functions
+require(stringr)
+require(leaflet.extras)
+```
+
+
+```{r, data_load, results='hide'}
+railway_data   <- readOGR("./GBR_rails.shp", GDAL1_integer64_policy=TRUE)  # for lines map
+
+admin_data     <- read.csv("GBR_adm2.csv")                                 # for poly map
+admin.load     <- readOGR("./GBR_adm2.shp",  GDAL1_integer64_policy=TRUE)  # for poly map  
+
+happiness_data <- read.csv("HappinessData.csv")    
+```
+
+```{r, cleaning}
+admin_data <- admin_data[ -c(2:5, 7, 9, 11:12) ]
+names(admin_data) <- c("OBJECTID", "Country", "Area", "Type")
+happiness_data <- subset(happiness_data, happiness_data$Area!="City of London")
+
+admin_data <- merge(x = admin_data, y = happiness_data, by = "Area", all.x = TRUE)
+```
+
+
+```{r, merge}
+admin_subset <- subset(admin_data, admin_data$Year=='2016' | is.na(admin_data$Year))
+
+# start csv ID count at 0 instead of 1 to match shp IDs
+admin_subset$OBJECTID = admin_subset$OBJECTID - 1
+
+# Merge data on thier respective IDs
+admin      <- admin.load[admin.load$ID_2 %in% admin_subset$OBJECTID,]
+admin@data <- merge(admin@data, admin_subset, sort=FALSE,
+                    by.x='ID_2', by.y='OBJECTID', all.x = TRUE)
+```
+
+
+```{r, polygons}
+leaflet() %>% 
+  
+  # Determine base maps
+  addProviderTiles("OpenStreetMap.HOT", group = "Street Map") %>%
+  addProviderTiles("Esri.WorldTerrain", group = "World Terrain Map") %>%
+
+  
+  addPolygons(data = admin, color = "tomato", fillOpacity = 0.2, weight=2,
+              highlightOptions = highlightOptions(color="White", bringToFront=TRUE),
+              popup = ~paste0(admin$Area, ", ", admin$Country)) %>%
+  addPolylines(data = railway_data, color = "black", weight=1, opacity=1) %>%
+  
+  # Add in layers control
+  addLayersControl(
+    baseGroups = c("Street Map", "World Terrain Map"),
+    options = layersControlOptions(collapsed=FALSE)
+  )
+```
+
+```{r}
+ggplot(subset(admin_subset, !is.na(admin_subset$Year)), aes(x=SuicideRates, y=Happiness, color=as.integer(Happiness))) + geom_point()
+```
+
+
+```{r}
+ggplot(subset(admin_subset, !is.na(admin_subset$Year)), aes(x=CrimeRates, y=Happiness, color=as.integer(Happiness))) + geom_point() 
+```
+
+```{r}
+ggplot(subset(admin_subset, !is.na(admin_subset$Year)), aes(x=reorder(Area, desc(Happiness)), y=CrimeRates, fill=as.integer(Happiness))) + 
+  geom_bar(stat="identity", position=position_dodge()) + 
+  coord_flip()
+```
+
+```{r}
+ggplot(subset(admin_subset, !is.na(admin_subset$Year)), aes(x=reorder(Area, desc(Happiness)), y=Happiness, fill=as.integer(Happiness))) + geom_bar(stat="identity", position=position_dodge()) + coord_flip()
+```
+
+
+
