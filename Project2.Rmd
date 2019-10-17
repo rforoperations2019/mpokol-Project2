@@ -1,117 +1,172 @@
 ---
-title: "Project2 Practice"
-author: "Muriel Pokol"
-date: "October 10, 2019"
-output: html_document
+title: "Project 2"
+output: 
+ flexdashboard::flex_dashboard:
+   orientation: rows
+   vertical_layout: scroll
+   source_code: embed
+   theme: lumen
+runtime: shiny
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
-
-```{r setup2, include=FALSE}
-require(rgdal)
+```{r context="setup", include=FALSE}
+library(shiny)
 library(ggplot2)
+library(dplyr)
+library(flexdashboard)
+library(plotly)
+require(rgdal)
 require(leaflet)
-require(dplyr)
 require(readxl)
 library(jsonlite) # fromJSON
 library(utils) # URLencode functions
 require(stringr)
 require(leaflet.extras)
-
 ```
 
 ```{r, data_load, results='hide'}
-railway_data     <- readOGR("./GBR_rails.shp", GDAL1_integer64_policy=TRUE)  # for lines map
-admin_data_excel <- read.csv("GBR_adm2.csv")                                 # for poly map
-admin.load       <- readOGR("./GBR_adm2.shp",  GDAL1_integer64_policy=TRUE)  # for poly map  
+railway_data   <- readOGR("./GBR_rails.shp", GDAL1_integer64_policy=TRUE)  # for lines map
+
+admin_data     <- read.csv("GBR_adm2.csv")                                 # for poly map
+admin.load     <- readOGR("./GBR_adm2.shp",  GDAL1_integer64_policy=TRUE)  # for poly map  
+
+happiness_data <- read.csv("HappinessData.csv")    
 ```
 
-## YAY APIs
-Data from : https://data.gov.uk/dataset/e284af14-70f0-43b4-a49f-6010eda83fed/travel-to-work-areas-december-2011-ultra-generalised-clipped-boundaries-in-united-kingdom
-```{r, esri}
-# Travel from Work Areas
-# Load as geojson
-travel <- readOGR("http://geoportal1-ons.opendata.arcgis.com/datasets/d3062ec5f03b49a7be631d71586cac8c_4.geojson")
-# Plot polling locations
-plot(travel)
+```{r, cleaning}
+admin_data <- admin_data[ -c(2:5, 7, 9, 11:12) ]
+names(admin_data) <- c("OBJECTID", "Country", "Area", "Type")
+happiness_data <- subset(happiness_data, happiness_data$Area!="City of London")
+
+admin_data <- merge(x = admin_data, y = happiness_data, by = "Area", all.x = TRUE)
 ```
 
-## Train Lines across the United Kingdom
-Builds a map with layer of lines.  This map also includes a functioning `layersControl()` to choose between two basemaps. [^1]
- 
-[^1]: Railway data did not download with a csv attachment denoting *which* train lines they are or if the railways are named, and so there is no popup associated with this dataset. I spoke to Malvika about this in Office Hours. 
 
-```{r, lines}
-leaflet() %>%
-  
-  # Determine base maps
-  addProviderTiles("Stamen.Toner",      group = "Toner Map") %>%
-  addProviderTiles("Esri.WorldTerrain", group = "World Terrain Map") %>%
-  addProviderTiles("OpenStreetMap.HOT", group = "Street Map") %>% 
-  
-  addPolylines(data = railway_data, color = "tomato", highlightOptions = highlightOptions(color="White", 
-                                                                     bringToFront=TRUE)) %>%
-  addPolygons(data = travel, color = "blue", fillOpacity = 0.25, 
-              highlightOptions = highlightOptions(color="White", bringToFront=TRUE)) %>%
-  
-  # Add in layers control
-  addLayersControl(
-    baseGroups = c("Toner Map", "World Terrain Map", "Street Map"),
-    options = layersControlOptions(collapsed=FALSE)
-  )
+
+Inputs {.sidebar}
+=======================================================================
+
+```{r context="render"}
+checkboxGroupInput(inputId = 'Year',
+                   label = "Select Year(s):",
+                   choices = c('2011' = '2011',
+                               '2012' = '2012',
+                               '2013' = '2013',
+                               '2014' = '2014',
+                               '2015' = '2015',
+                               '2016' = '2016'),
+                   selected = ('2016'))
 ```
 
-<br>
 
-## Administrative Counties in the United Kingdom 
-Builds a map with layer of polygons, again with a functioning `layersControl()` to choose between two basemaps. Counties are broken down with the polygon boundaries, and county name is shown as a popup.
+```{r}
+admin_subset <- reactive({
+  admin_data %>%
+    filter(Year %in% input$Year | is.na(admin_data$Year))
+})
+```
+
+
+```{r context="render"}
+selectInput(inputId = 'x_input',
+                   label = "Plotting against Happiness:",
+                   choices = c('NoReligion' = 'NoReligion',
+                               'NoSport' = 'NoSport',
+                               'ChildhoodObesity' = 'ChildhoodObesity',
+                   selected = 'NoSport'))
+```
+
+
 ```{r, merge}
+admin_subset1 <- subset(admin_data, admin_data$Year=='2016' | is.na(admin_data$Year))
+
 # start csv ID count at 0 instead of 1 to match shp IDs
-admin_data_excel$OBJECTID = admin_data_excel$OBJECTID - 1
+admin_subset1$OBJECTID = admin_subset1$OBJECTID - 1
 
 # Merge data on thier respective IDs
-admin      <- admin.load[admin.load$ID_2 %in% admin_data_excel$OBJECTID,]
-admin@data <- merge(admin@data, admin_data_excel, sort=FALSE,
-                    by.x='ID_2', by.y='OBJECTID')
+admin      <- admin.load[admin.load$ID_2 %in% admin_subset1$OBJECTID,]
+admin@data <- merge(admin@data, admin_subset1, sort=FALSE,
+                    by.x='ID_2', by.y='OBJECTID', all.x = TRUE)
 ```
 
-```{r, polygons}
-leaflet(data = admin) %>% 
-  
-  # Determine base maps
-  addProviderTiles("Stamen.Toner",    group = "Toner Map") %>%
-  addProviderTiles("Esri.WorldTerrain", group = "World Terrain Map") %>%
-  addProviderTiles("OpenStreetMap.HOT", group = "Street Map") %>%
-  
-  addPolygons(color = "tomato", fillOpacity = 0.5, 
-              highlightOptions = highlightOptions(color="White", bringToFront=TRUE),
-              popup = ~paste0(admin$NAME_2.x, ", ", admin$TYPE_2.x)) %>%
-  addPolylines(data = travel, color = "blue", fillOpacity = 0.25, 
-              highlightOptions = highlightOptions(color="White", bringToFront=TRUE)) %>%
-  
-  # Add in layers control
-  addLayersControl(
-    baseGroups = c("Toner Map", "World Terrain Map", "Street Map"),
-    options = layersControlOptions(collapsed=FALSE)
+Maps R Us
+=======================================================================
+
+
+Row {}
+-----------------------------------------------------------------------
+
+```{r}
+
+  leaflet() %>% 
+    
+    # Determine base maps
+    addProviderTiles("OpenStreetMap.HOT", group = "Street Map") %>%
+    addProviderTiles("Esri.WorldTerrain", group = "World Terrain Map") %>%
+    
+    addPolygons(data = admin, color = "tomato", fillOpacity = 0.2, weight=2,
+                highlightOptions = highlightOptions(color="White", bringToFront=TRUE),
+                popup = ~paste0(admin$Area, ", ", admin$Country)) %>%
+    addPolylines(data = railway_data, color = "black", weight=1, opacity=1) %>%
+    
+    # Add in layers control
+    addLayersControl(
+      baseGroups = c("Street Map", "World Terrain Map"),
+      options = layersControlOptions(collapsed=FALSE))
+```
+
+
+Row {}
+-----------------------------------------------------------------------
+
+### Input-Based Plot
+
+```{r context="server"}
+output$InputPlot <- renderPlotly({
+  ggplotly(
+    ggplot(subset(admin_subset(), !is.na(admin_subset()$Year)), 
+           aes_string(x=paste0('reorder(Area, desc(Happiness))'), y=input$x_input, fill=paste0('as.integer(Happiness)'))) + 
+      geom_bar(stat="identity", position=position_dodge()) + coord_flip() + theme(legend.position="none")
   )
+})
+```
+
+```{r context="render"}
+plotlyOutput('InputPlot')
 ```
 
 
-```{r}
+### Happiness Plot
 
-ggplot(admin_data_excel, aes(x=NAME_1)) + geom_bar()
 
+```{r context="server"}
+output$HappPlot <- renderPlotly({
+  ggplotly(
+    ggplot(subset(admin_subset(), !is.na(admin_subset()$Year)), 
+           aes(x=reorder(Area, desc(Happiness)), y=Happiness, fill=as.integer(Happiness))) +
+      geom_bar(stat="identity", position=position_dodge()) + coord_flip() + theme(legend.position="none")
+  )
+})
 ```
 
-```{r}
-
-#ggplot(admin_data_excel, aes(x=TYPE_2)) + geom_bar()
-ggplot(admin_data_excel, ggplot2::aes(area = NAME_1, fill = TYPE_2)) + geom_treemap()
+```{r context="render"}
+plotlyOutput('HappPlot')
 ```
 
 
 
+Data Table
+=======================================================================
 
+### Happiness Dataset
 
+```{r context="server"}
+output$DataTable <- DT::renderDataTable({
+  DT::datatable(admin_subset(), 
+                options=list(pageLength=10), 
+                rownames=FALSE)})
+```
+
+```{r context="render"}
+DT::dataTableOutput('DataTable')
+```
