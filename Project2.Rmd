@@ -26,25 +26,39 @@ require(leaflet.extras)
 
 ```{r, data_load, results='hide'}
 railway_data   <- readOGR("./GBR_rails.shp", GDAL1_integer64_policy=TRUE)  # for lines map
-
 admin_data     <- read.csv("GBR_adm2.csv")                                 # for poly map
 admin.load     <- readOGR("./GBR_adm2.shp",  GDAL1_integer64_policy=TRUE)  # for poly map  
-
 happiness_data <- read.csv("HappinessData.csv")    
 ```
 
-```{r, cleaning}
-admin_data <- admin_data[ -c(2:5, 7, 9, 11:12) ]
-names(admin_data) <- c("OBJECTID", "Country", "Area", "Type")
-happiness_data <- subset(happiness_data, happiness_data$Area!="City of London")
 
-admin_data <- merge(x = admin_data, y = happiness_data, by = "Area", all.x = TRUE)
+```{r, cleaning}
+admin_data        <- admin_data[ -c(2:5, 7, 9, 11:12) ]
+names(admin_data) <- c("OBJECTID", "Country", "Area", "Type")
+happiness_data    <- subset(happiness_data, happiness_data$Area!="City of London")
+
+admin_data <-left_join(x = admin_data, y = happiness_data, by = "Area")
+
+# Merge data on their respective IDs
+admin      <- admin.load[admin.load$ID_2 %in% admin_data$OBJECTID,]
+admin@data <- merge(admin@data, admin_data, sort=FALSE, by.x='ID_2', by.y='OBJECTID') %>%
+  distinct(Area, .keep_all=TRUE)
 ```
 
 
 
 Inputs {.sidebar}
 =======================================================================
+
+```{r context="render"}
+checkboxGroupInput("countrySelect", "Country Filter:",
+                   choices = c('England' = 'England',
+                               'Northern Ireland' = 'Northern Ireland',
+                               'Scotland' = 'Scotland',
+                               'Wales' = 'Wales'),
+                   selected = ('England'))
+```
+
 
 ```{r context="render"}
 checkboxGroupInput(inputId = 'Year',
@@ -69,50 +83,72 @@ admin_subset <- reactive({
 
 ```{r context="render"}
 selectInput(inputId = 'x_input',
-                   label = "Plotting against Happiness:",
-                   choices = c('NoReligion' = 'NoReligion',
-                               'NoSport' = 'NoSport',
-                               'ChildhoodObesity' = 'ChildhoodObesity',
-                   selected = 'NoSport'))
+            label = "Plotting against Happiness:",
+            choices = c('NoReligion' = 'NoReligion',
+                        'NoSport' = 'NoSport',
+                        'ChildhoodObesity' = 'ChildhoodObesity',
+                        selected = 'NoSport'))
 ```
 
+```{r context="render"}
+output$downloadData <- downloadHandler(
+  filename = function() {
+    paste('data-', Sys.Date(), '.csv', sep='')
+  },
+    content = function(file) {
+      write.csv(admin_subset(), file)
+  }
+)
 
-```{r, merge}
-admin_subset1 <- subset(admin_data, admin_data$Year=='2016' | is.na(admin_data$Year))
-
-# start csv ID count at 0 instead of 1 to match shp IDs
-admin_subset1$OBJECTID = admin_subset1$OBJECTID - 1
-
-# Merge data on thier respective IDs
-admin      <- admin.load[admin.load$ID_2 %in% admin_subset1$OBJECTID,]
-admin@data <- merge(admin@data, admin_subset1, sort=FALSE,
-                    by.x='ID_2', by.y='OBJECTID', all.x = TRUE)
+downloadLink(outputId = "downloadData", label = "Download Data")
 ```
+
 
 Maps R Us
 =======================================================================
 
 
+
+
+
 Row {}
 -----------------------------------------------------------------------
 
-```{r}
+```{r context="server"}
+countryInputs <- reactive({
+  admin2 <- subset(admin, Country == input$countrySelect)
+  return(admin2)
+  })
 
-  leaflet() %>% 
+output$leaflet <- renderLeaflet({
+  leaflet() %>%
     
     # Determine base maps
     addProviderTiles("OpenStreetMap.HOT", group = "Street Map") %>%
     addProviderTiles("Esri.WorldTerrain", group = "World Terrain Map") %>%
     
-    addPolygons(data = admin, color = "tomato", fillOpacity = 0.2, weight=2,
-                highlightOptions = highlightOptions(color="White", bringToFront=TRUE),
-                popup = ~paste0(admin$Area, ", ", admin$Country)) %>%
-    addPolylines(data = railway_data, color = "black", weight=1, opacity=1) %>%
-    
     # Add in layers control
     addLayersControl(
       baseGroups = c("Street Map", "World Terrain Map"),
       options = layersControlOptions(collapsed=FALSE))
+   })
+
+```
+
+```{r context="render"}
+observe({
+  proxy <- leafletProxy("leaflet")
+  
+  proxy %>%
+    clearShapes() %>%
+    addPolygons(data = countryInputs(),color = "tomato", fillOpacity = 0.2, weight=2,
+                highlightOptions = highlightOptions(color="White", bringToFront=TRUE),
+                popup = ~paste0(countryInputs()$Area, ", ", countryInputs()$Happiness)) %>%
+        addPolylines(data = railway_data, color = "black", weight=1, opacity=1)
+  })
+   
+leafletOutput("leaflet")
+   
 ```
 
 
@@ -122,7 +158,7 @@ Row {}
 ### Input-Based Plot
 
 ```{r context="server"}
-output$InputPlot <- renderPlotly({
+output$InputBar <- renderPlotly({
   ggplotly(
     ggplot(subset(admin_subset(), !is.na(admin_subset()$Year)), 
            aes_string(x=paste0('reorder(Area, desc(Happiness))'), y=input$x_input, fill=paste0('as.integer(Happiness)'))) + 
@@ -132,15 +168,13 @@ output$InputPlot <- renderPlotly({
 ```
 
 ```{r context="render"}
-plotlyOutput('InputPlot')
+plotlyOutput('InputBar')
 ```
 
-
-### Happiness Plot
-
+### Another plot1
 
 ```{r context="server"}
-output$HappPlot <- renderPlotly({
+output$HappBar <- renderPlotly({
   ggplotly(
     ggplot(subset(admin_subset(), !is.na(admin_subset()$Year)), 
            aes(x=reorder(Area, desc(Happiness)), y=Happiness, fill=as.integer(Happiness))) +
@@ -150,10 +184,29 @@ output$HappPlot <- renderPlotly({
 ```
 
 ```{r context="render"}
-plotlyOutput('HappPlot')
+plotlyOutput('HappBar')
 ```
 
+Ideally More Maps and MOre Plots
+=======================================================================
 
+### Another plot2
+
+ggplot(subset(admin_subset, !is.na(admin_subset$Year)), aes(x=SuicideRates, y=Happiness, color=as.integer(Happiness))) + geom_point()
+
+```{r context="server"}
+output$InputPoint <- renderPlotly({
+  ggplotly(
+    ggplot(subset(admin_subset(), !is.na(admin_subset()$Year)), 
+           aes_string(x=input$x_input, y='Happiness', color=paste0('as.integer(Happiness)'))) + 
+      geom_point()
+  )
+})
+```
+
+```{r context="render"}
+plotlyOutput('InputPoint')
+```
 
 Data Table
 =======================================================================
@@ -164,9 +217,11 @@ Data Table
 output$DataTable <- DT::renderDataTable({
   DT::datatable(admin_subset(), 
                 options=list(pageLength=10), 
-                rownames=FALSE)})
+                rownames=FALSE)
+  })
 ```
 
 ```{r context="render"}
 DT::dataTableOutput('DataTable')
 ```
+
