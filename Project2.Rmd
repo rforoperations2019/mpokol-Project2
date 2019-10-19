@@ -1,11 +1,11 @@
 ---
-title: "Project 2"
+title: "Wellbeing in the UK"
 output: 
  flexdashboard::flex_dashboard:
    orientation: rows
    vertical_layout: scroll
    source_code: embed
-   theme: lumen
+   theme: simplex
 runtime: shiny
 ---
 
@@ -31,34 +31,42 @@ admin.load     <- readOGR("./GBR_adm2.shp",  GDAL1_integer64_policy=TRUE)  # for
 happiness_data <- read.csv("HappinessData.csv")    
 ```
 
-
 ```{r, cleaning}
 admin_data        <- admin_data[ -c(2:5, 7, 9, 11:12) ]
 names(admin_data) <- c("OBJECTID", "Country", "Area", "Type")
 happiness_data    <- subset(happiness_data, happiness_data$Area!="City of London")
 
+# change necessary columns to numeric data for plotting
+happiness_data$Happiness        = as.numeric(happiness_data$Happiness)
+happiness_data$NoReligion       = as.numeric(happiness_data$NoReligion)
+happiness_data$NoSport          = as.numeric(happiness_data$NoSport)
+happiness_data$ChildhoodObesity = as.numeric(happiness_data$ChildhoodObesity)
+happiness_data$SuicideRAtes     = as.numeric(happiness_data$SuicideRates)
+happiness_data$CrimeRates       = as.numeric(happiness_data$CrimeRates)
+
+
+# merge happiness dataset with administrative areas dataset
 admin_data <-left_join(x = admin_data, y = happiness_data, by = "Area")
 
-# Merge data on their respective IDs
+# merge above dataset with the shape file
 admin      <- admin.load[admin.load$ID_2 %in% admin_data$OBJECTID,]
 admin@data <- merge(admin@data, admin_data, sort=FALSE, by.x='ID_2', by.y='OBJECTID') %>%
-  distinct(Area, .keep_all=TRUE)
+  distinct(Area, .keep_all=TRUE)  # don't use area duplicates when merging
 ```
-
 
 
 Inputs {.sidebar}
 =======================================================================
 
 ```{r context="render"}
-checkboxGroupInput("countrySelect", "Country Filter:",
-                   choices = c('England' = 'England',
+radioButtons(inputId = "countrySelect", 
+                   label = "Country Filter:",
+                   choices = c('England'          = 'England',
                                'Northern Ireland' = 'Northern Ireland',
-                               'Scotland' = 'Scotland',
-                               'Wales' = 'Wales'),
+                               'Scotland'         = 'Scotland',
+                               'Wales'            = 'Wales'),
                    selected = ('England'))
 ```
-
 
 ```{r context="render"}
 checkboxGroupInput(inputId = 'Year',
@@ -72,21 +80,23 @@ checkboxGroupInput(inputId = 'Year',
                    selected = ('2016'))
 ```
 
-
 ```{r}
 admin_subset <- reactive({
   admin_data %>%
+    # filter for year in happiness data
+    # but keep location information when ther eis no happiness data
     filter(Year %in% input$Year | is.na(admin_data$Year))
 })
 ```
 
-
 ```{r context="render"}
 selectInput(inputId = 'x_input',
             label = "Plotting against Happiness:",
-            choices = c('NoReligion' = 'NoReligion',
-                        'NoSport' = 'NoSport',
-                        'ChildhoodObesity' = 'ChildhoodObesity',
+            choices = c('No Religion'       = 'NoReligion',
+                        'No Sport'          = 'NoSport',
+                        'Childhood Obesity' = 'ChildhoodObesity',
+                        'Suicide Rates'     = 'SuicideRates',
+                        'Crime Rates'       = 'CrimeRates',
                         selected = 'NoSport'))
 ```
 
@@ -100,19 +110,18 @@ output$downloadData <- downloadHandler(
   }
 )
 
-downloadLink(outputId = "downloadData", label = "Download Data")
+downloadLink(outputId = "downloadData", label = "Click Here to Download Data")
 ```
 
 
-Maps R Us
+Main
 =======================================================================
-
-
-
 
 
 Row {}
 -----------------------------------------------------------------------
+
+### United Kingdom Counties and Railroads
 
 ```{r context="server"}
 countryInputs <- reactive({
@@ -127,6 +136,8 @@ output$leaflet <- renderLeaflet({
     addProviderTiles("OpenStreetMap.HOT", group = "Street Map") %>%
     addProviderTiles("Esri.WorldTerrain", group = "World Terrain Map") %>%
     
+    setView(lng = -5, lat = 55, zoom = 5)  %>%
+    
     # Add in layers control
     addLayersControl(
       baseGroups = c("Street Map", "World Terrain Map"),
@@ -136,70 +147,46 @@ output$leaflet <- renderLeaflet({
 ```
 
 ```{r context="render"}
+# leaflet proxy updating layer
 observe({
   proxy <- leafletProxy("leaflet")
   
   proxy %>%
+    
     clearShapes() %>%
+    
     addPolygons(data = countryInputs(),color = "tomato", fillOpacity = 0.2, weight=2,
                 highlightOptions = highlightOptions(color="White", bringToFront=TRUE),
-                popup = ~paste0(countryInputs()$Area, ", ", countryInputs()$Happiness)) %>%
-        addPolylines(data = railway_data, color = "black", weight=1, opacity=1)
+                popup = ~paste0(countryInputs()$Area)) %>%
+    
+    addPolylines(data = railway_data, color = "black", weight=1, opacity=1)
   })
    
 leafletOutput("leaflet")
    
 ```
 
-
-Row {}
+Row {data-height=100}
 -----------------------------------------------------------------------
 
-### Input-Based Plot
+This map represents administrative areas (such as counties) of the United Kingdom along with lines indicating the presence of railroads.  Multiple converging railroads signifies a "hub" of activity, such as a city like London.  This mape and the graphs below give you the opportunity to look at data related to overall wellbeing and view the area geographically--for example, Ealing, England had the highest suicide rates of 2016 and it is located near London with multiple train lines running through the small county.
 
-```{r context="server"}
-output$InputBar <- renderPlotly({
-  ggplotly(
-    ggplot(subset(admin_subset(), !is.na(admin_subset()$Year)), 
-           aes_string(x=paste0('reorder(Area, desc(Happiness))'), y=input$x_input, fill=paste0('as.integer(Happiness)'))) + 
-      geom_bar(stat="identity", position=position_dodge()) + coord_flip() + theme(legend.position="none")
-  )
-})
-```
+Row {data-height=400}
+-----------------------------------------------------------------------
 
-```{r context="render"}
-plotlyOutput('InputBar')
-```
-
-### Another plot1
-
-```{r context="server"}
-output$HappBar <- renderPlotly({
-  ggplotly(
-    ggplot(subset(admin_subset(), !is.na(admin_subset()$Year)), 
-           aes(x=reorder(Area, desc(Happiness)), y=Happiness, fill=as.integer(Happiness))) +
-      geom_bar(stat="identity", position=position_dodge()) + coord_flip() + theme(legend.position="none")
-  )
-})
-```
-
-```{r context="render"}
-plotlyOutput('HappBar')
-```
-
-Ideally More Maps and MOre Plots
-=======================================================================
-
-### Another plot2
-
-ggplot(subset(admin_subset, !is.na(admin_subset$Year)), aes(x=SuicideRates, y=Happiness, color=as.integer(Happiness))) + geom_point()
+### Relationship between Input and Happiness
 
 ```{r context="server"}
 output$InputPoint <- renderPlotly({
   ggplotly(
+        
+    # subset out any rows that do not have happiness data
     ggplot(subset(admin_subset(), !is.na(admin_subset()$Year)), 
-           aes_string(x=input$x_input, y='Happiness', color=paste0('as.integer(Happiness)'))) + 
-      geom_point()
+           aes_string(x=input$x_input, y='Happiness', color='Happiness')) + 
+      scale_color_gradient(low = 'red', high = 'lightyellow') +
+      geom_point() +
+      theme(legend.position="none"),
+    tooltip = c('x', 'y')
   )
 })
 ```
@@ -208,8 +195,118 @@ output$InputPoint <- renderPlotly({
 plotlyOutput('InputPoint')
 ```
 
+Row {data-height=250}
+-----------------------------------------------------------------------
+
+```{r context="server"}
+output$InputBar <- renderPlotly({
+  ggplotly(
+    
+    # subset out any rows that do not have happiness data
+    # those rows were needed for mapping but not plotting
+    ggplot(subset(admin_subset(), !is.na(admin_subset()$Year)), 
+           aes_string(x=paste0('reorder(Area, desc(Happiness))'), y=input$x_input, fill='Happiness')) + 
+      scale_fill_gradient(low = 'red', high = 'lightyellow') +
+      geom_bar(stat="identity", position=position_dodge()) + 
+      theme(axis.title.y=element_blank(), axis.text.x=element_blank(),legend.position="none") + 
+      coord_flip(),
+    tooltip = c('y')
+  )
+})
+```
+
+```{r context="render"}
+plotlyOutput('InputBar')
+```
+
+
+```{r context="server"}
+output$HappBar <- renderPlotly({
+  ggplotly(
+        
+    # subset out any rows that do not have happiness data
+    ggplot(subset(admin_subset(), !is.na(admin_subset()$Year)), 
+           aes(x=reorder(Area, desc(Happiness)), y=Happiness, fill=Happiness)) +
+      scale_fill_gradient(low = 'red', high = 'lightyellow') +
+      geom_bar(stat="identity", position=position_dodge()) +
+      theme(axis.title.y=element_blank(), axis.text.x=element_blank(), legend.position="none") + 
+      coord_flip(),
+    tooltip = c('y')
+  )
+})
+```
+
+```{r context="render"}
+plotlyOutput('HappBar')
+```
+
+
 Data Table
 =======================================================================
+
+Row {}
+-----------------------------------------------------------------------
+
+### Avg. Happiness
+
+```{r}
+renderValueBox({
+  avg_Happ <- mean(admin_subset()$Happiness, na.rm = TRUE)
+  valueBox(avg_Happ)
+})
+```
+
+### Avg. Not Religious
+
+```{r}
+renderValueBox({
+  avg_Religion <- mean(admin_subset()$NoReligion, na.rm = TRUE)
+  valueBox(round(avg_Religion, 2))
+})
+```
+
+### Avg. No Sport
+
+```{r}
+renderValueBox({
+  avg_Sport <- mean(admin_subset()$NoSport, na.rm = TRUE)
+  valueBox(round(avg_Sport, 2))
+})
+```
+
+Row {}
+-----------------------------------------------------------------------
+
+### Avg. Childhood Obesity
+
+```{r}
+renderValueBox({
+  avg_Ob <- mean(admin_subset()$ChildhoodObesity, na.rm = TRUE)
+  valueBox(round(avg_Ob, 2))
+})
+```
+
+### Avg. Suicide Rates
+
+```{r}
+renderValueBox({
+  avg_SuRa <- mean(admin_subset()$SuicideRates, na.rm = TRUE)
+  valueBox(round(avg_SuRa, 2))
+})
+```
+
+### Avg. Crime Rates
+
+```{r}
+renderValueBox({
+  avg_Crime <- mean(admin_subset()$CrimeRates, na.rm = TRUE)
+  valueBox(round(avg_Crime, 2))
+})
+```
+
+
+Row {data-height=250}
+-----------------------------------------------------------------------
 
 ### Happiness Dataset
 
